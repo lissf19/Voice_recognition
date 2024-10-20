@@ -10,3 +10,10 @@ As a final user:
 The chosen metrics for evaluation - f1-score. 
 The chosen models: Neural - CNN, MLP, Classical - Random Forest Classifier together with RandomizedSearchCV applied. 
 
+Main CNN model: 
+The chosen activation function - Relu
+Splitting - 80% train, 20% validation <=> needs to be changed to 70-20-10 
+Optimizer - Adam
+Scheduler - StepLR (step_size=5, gamma=0.1)
+
+
