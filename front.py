@@ -35,28 +35,35 @@ class VoiceRecognitionApp(QWidget):
 
     def start_recording(self):
         self.recording = True
+        self.audio_data = [] 
         self.label.setText("Recording...")
 
         def callback(indata, frames, time, status):
-            if self.recording:
-                self.audio_data.append(indata.copy())
+          if status:
+            print(f"Recording error: {status}")
+          if self.recording:
+            self.audio_data.append(indata.copy())  # audio data real-time
 
         self.stream = sd.InputStream(callback=callback, channels=1, samplerate=16000)
-        with self.stream:
-            while self.recording:
-                sd.sleep(100)
+        self.stream.start() 
 
     def stop_recording(self):
-        self.recording = False
-        self.label.setText("Processing the recording...")
+      self.recording = False
+      self.stream.stop()  # stop the stream
+      self.stream.close()  # close the stream
 
-        audio_data_np = np.concatenate(self.audio_data, axis=0)
-        wav.write("recorded_audio.wav", 16000, audio_data_np.astype(np.float32))
+      self.label.setText("Processing the recording...")
 
-        # Process the recorded audio file
-        predicted_class = self.process_audio_file("recorded_audio.wav")
-        self.label.setText(f"Predicted class is {predicted_class}")
-        self.audio_data = []
+     # audio to numpy
+      audio_data_np = np.concatenate(self.audio_data, axis=0)
+
+      # saving audio wav for preprocessing
+      wav.write("recorded_audio.wav", 16000, audio_data_np.astype(np.float32))
+
+    # Process the recorded audio file
+      predicted_class = self.process_audio_file("recorded_audio.wav")
+      self.label.setText(f"Predicted class is {predicted_class}")
+      self.audio_data = [] 
 
     def upload_wav_file(self):
         options = QFileDialog.Options()
