@@ -57,6 +57,11 @@ class VoiceRecognitionApp(QWidget):
      # audio to numpy
       audio_data_np = np.concatenate(self.audio_data, axis=0)
 
+      if len(audio_data_np) < 16000 * 10:
+            self.label.setText("The recording is too short, please try again.")
+            self.audio_data = []  # Reset audio data
+            return
+
       # saving audio wav for preprocessing
       wav.write("recorded_audio.wav", 16000, audio_data_np.astype(np.float32))
 
