@@ -25,6 +25,8 @@ from sklearn.metrics import f1_score
 from collections import Counter
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
+import noisereduce as nr
+from sklearn.model_selection import train_test_split
 
 # 1. Recursively collect .wav files from all subdirectories
 def get_wav_files(wav_dir):
@@ -38,11 +40,19 @@ def get_wav_files(wav_dir):
     print(f"Total .wav files found: {len(wav_files)}")
     return wav_files
 
+def apply_noise_reduction(y, sr=16000):
+    """Применение шумоподавления к аудиоданным."""
+    reduced_noise_audio = nr.reduce_noise(y=y, sr=sr)
+    return reduced_noise_audio
+
 def load_and_clean_audio(file_path, sr=16000, trim_silence=True, cut_length=None):
     try:
         y, sr = librosa.load(file_path, sr=sr)
         print(f"Loaded {file_path}, Audio Length: {len(y)}")
 
+        y = apply_noise_reduction(y, sr)
+        print(f"Reduced noise {file_path}, Audio Length after reducing noise: {len(y)}")
+        
         y = y / np.max(np.abs(y))
 
         if trim_silence:
@@ -501,7 +511,7 @@ def random_forest_with_random_search(spectrograms, labels, test_size=0.2, n_iter
     return best_rf, best_params, f1
 
 if __name__ == "__main__":
-    wav_dir = ' /Users/sunsosun/Desktop/ML_DEPLOY/daps'
+    wav_dir = '/Users/sunsosun/Desktop/ML_DEPLOY/daps'
     save_dir = '/Users/sunsosun/Desktop/ML_DEPLOY/npy_spectrograms'
     cut_length = 10
     n_mels = 64  # Number of Mel bands
@@ -515,20 +525,37 @@ if __name__ == "__main__":
 
     #a part for neural (it works, just commenting for shortening the processing):
 
-    split_index = int(0.8 * len(spectrograms))  # 80% for training, 20% for validation
-    train_dataset = SpectrogramDataset(spectrograms[:split_index], labels[:split_index])
-    val_dataset = SpectrogramDataset(spectrograms[split_index:], labels[split_index:])
+    # split_index = int(0.8 * len(spectrograms))  # 80% for training, 20% for validation
+    # train_dataset = SpectrogramDataset(spectrograms[:split_index], labels[:split_index])
+    # val_dataset = SpectrogramDataset(spectrograms[split_index:], labels[split_index:])
+    # train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    # val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+
+    train_val_spectrograms, test_spectrograms, train_val_labels, test_labels = train_test_split(spectrograms, labels, test_size=0.2, random_state=42, stratify=labels)
+    train_spectrograms, val_spectrograms, train_labels, val_labels = train_test_split(train_val_spectrograms, train_val_labels, test_size=0.125, random_state=42, stratify=train_val_labels)
+    # 0.125 * 80% = 10%
+
+    train_dataset = SpectrogramDataset(train_spectrograms, train_labels)
+    val_dataset = SpectrogramDataset(val_spectrograms, val_labels)
+    test_dataset = SpectrogramDataset(test_spectrograms, test_labels)
+
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     best_model = compare_models(train_loader, val_loader, labels)
 
-    # Шаг 5: Сохранение обученной модели
     model_save_path = '/Users/sunsosun/Desktop/ML_DEPLOY/best_model.pth'
     save_model_neural(best_model, model_save_path)
-    print(f"Модель сохранена в: {model_save_path}")
+    print(f"Model saved to: {model_save_path}")
+
+    f1_val = calculate_f1_score(best_model, val_loader, device)
+    print(f"f1-score on validation_set (10%): {f1_val:.4f}")
+
+    f1_test = calculate_f1_score(best_model, test_loader, device)
+    print(f"f1-score on test_set (20%): {f1_test:.4f}")
 
     #I'll add Random Forest just because i like it
     # best_rf_model, best_params, rf_f1_score = random_forest_with_random_search(spectrograms, labels, test_size=0.2, n_iter=10, cv=3)
