@@ -27,6 +27,9 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 import noisereduce as nr
 from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+import seaborn as sns
 
 # 1. Recursively collect .wav files from all subdirectories
 def get_wav_files(wav_dir):
@@ -116,7 +119,87 @@ def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=6
 
     print("All spectrograms processed and saved.")
 
-# 6. Visualize a Few npy's
+# 2. Preliminary analysis
+# Spectogram mean and variance
+def calculate_spectrogram_stats(spectrograms):
+    mean_list = []
+    var_list = []
+    
+    for spec in spectrograms:
+        mean_list.append(np.mean(spec))
+        var_list.append(np.var(spec))
+        
+    print(f"Average Spectrogram Mean: {np.mean(mean_list):.4f}")
+    print(f"Average Spectrogram Variance: {np.mean(var_list):.4f}")
+
+#Tracking Most and Least Difficult Samples
+def track_difficult_samples(model, loader, device):
+    model.eval()
+    sample_difficulties = []
+    
+    with torch.no_grad():
+        for X_batch, y_batch in loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            outputs = model(X_batch)
+            loss = F.cross_entropy(outputs, y_batch, reduction='none')
+            for i, l in enumerate(loss.cpu().numpy()):
+                sample_difficulties.append((X_batch[i], l, y_batch[i].cpu().numpy()))
+
+    # Sort samples by loss
+    sample_difficulties = sorted(sample_difficulties, key=lambda x: x[1], reverse=True)
+
+    most_difficult = sample_difficulties[:5]
+    least_difficult = sample_difficulties[-5:]
+    
+    print("Most difficult samples:")
+    for sample in most_difficult:
+        print(f"Sample Loss: {sample[1]:.4f}")
+    
+    print("Least difficult samples:")
+    for sample in least_difficult:
+        print(f"Sample Loss: {sample[1]:.4f}")
+
+# Finding Similar Samples Based on Activations
+def perform_clustering_and_plot(model, loader, device, n_clusters=5):
+    model.eval()
+    activations = []
+    labels = []
+
+    with torch.no_grad():
+        for X_batch, y_batch in loader:
+            X_batch = X_batch.to(device)
+            
+            # Forward pass through the network up to the first fully connected layer (fc1)
+            model.eval() 
+            x = model.pool(F.relu(model.conv1(X_batch)))  # Apply conv1 and pooling
+            x = model.pool(F.relu(model.conv2(x)))  # Apply conv2 and pooling
+
+            # Flatten before fully connected layer
+            x = x.view(-1, model.fc1.in_features)
+
+            activations.append(model.fc1(x).cpu().numpy())  # Collect activations from fc1
+            labels.extend(y_batch.cpu().numpy())
+
+    activations = np.vstack(activations)
+
+    # Dimensionality reduction using PCA 
+    pca = PCA(n_components=2)
+    reduced_activations = pca.fit_transform(activations)
+
+    # Clustering using KMeans
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(reduced_activations)
+
+    # Plotting 
+    sns.scatterplot(x=reduced_activations[:, 0], y=reduced_activations[:, 1], hue=clusters, palette="deep")
+    plt.title(f"Clustering activations at Epoch")
+    plt.xlabel("PCA Component 1")
+    plt.ylabel("PCA Component 2")
+    plt.show()
+
+
+
+# 3. Visualize a Few npy's <-> in main the mount is set to "3"
 def visualize_spectrograms(npy_files, num_to_visualize=3):
 
     for i, npy_file in enumerate(npy_files[:num_to_visualize]):
@@ -228,56 +311,10 @@ class MLP(nn.Module):
 
       return x
 
-def train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, lr=0.001):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    class_weights = calculate_class_weights(labels)
-    weights = torch.tensor([class_weights[0], class_weights[1]], dtype=torch.float32).to(device)
-
-    model = model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
-    criterion = nn.CrossEntropyLoss(weight=weights)
-
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(X_batch)
-            loss = criterion(outputs, y_batch)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-
-        scheduler.step()
-
-        print(f'Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(train_loader):.4f}')
-
-    # cross val
-    model.eval()
-    all_preds = []
-    all_labels = []
-    with torch.no_grad():
-        for X_batch, y_batch in val_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            outputs = model(X_batch)
-            _, predicted = torch.max(outputs, 1)
-            all_preds.extend(predicted.cpu().numpy())
-            all_labels.extend(y_batch.cpu().numpy())
-
-    # F1-score
-    f1 = f1_score(all_labels, all_preds, average='macro')
-    return f1
-
 def compare_models(train_loader, val_loader, labels):
-    # Словарь моделей для сравнения
     models = {
         'SimpleCNN': SimpleCNN(),
-        # Добавьте другие модели, если необходимо, например, 'MLP': MLP()
+        # other models - MLP or Random Forest
     }
 
     results = {}
@@ -319,7 +356,7 @@ def calculate_class_weights(labels):
     class_weights = {cls: total_samples / count for cls, count in class_counts.items()}
     return class_weights
 
-def train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, lr=0.001):
+def train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, lr=0.001, n_clusters=5):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     #depending on labels findin weights
     class_weights = calculate_class_weights(labels)
@@ -350,6 +387,9 @@ def train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, l
         scheduler.step()
 
         print(f'Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(train_loader):.4f}')
+
+        print(f"Clustering activations after Epoch {epoch+1}")
+        perform_clustering_and_plot(model, val_loader, device, n_clusters=n_clusters)
 
     # Estimation on val
     model.eval()
@@ -388,10 +428,6 @@ def calculate_f1_score(model, loader, device):
 def save_model_neural(model, path):
     torch.save(model, path)
 
-# def load_model_neural(model, path):
-#     model.load_state_dict(torch.load(path, map_location=device, weights_only=True), strict=False)
-#     model.eval()  # Устанавливаем модель в режим оценки (без обучения)
-#     return model
 
 
 """Saving for classical ML models - Random Forrest"""
@@ -413,20 +449,20 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-"""Лучшие параметры: {'n_estimators': 50, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_depth': 20, 'bootstrap': False}
-RandomForest F1-Score с лучшими параметрами: 0.9476
+"""Best parameters: {'n_estimators': 50, 'min_samples_split': 10, 'min_samples_leaf': 2, 'max_depth': 20, 'bootstrap': False}
+RandomForest F1-Score with best parameters: 0.9476
 
-Лучшие параметры: {'n_estimators': 25, 'min_samples_split': 10, 'min_samples_leaf': 1, 'max_depth': 15, 'criterion': 'entropy', 'bootstrap': False}
-RandomForest F1-Score с лучшими параметрами: 0.9598
+Best parameters: {'n_estimators': 25, 'min_samples_split': 10, 'min_samples_leaf': 1, 'max_depth': 15, 'criterion': 'entropy', 'bootstrap': False}
+RandomForest F1-Score with best parameters: 0.9598
 
 Fitting 3 folds for each of 10 candidates, totalling 30 fits
-Лучшие параметры: {'n_estimators': 25, 'min_samples_split': 9, 'min_samples_leaf': 3, 'max_depth': None, 'criterion': 'entropy', 'bootstrap': False}
-RandomForest F1-Score с лучшими параметрами: 0.9598
+Best parameters: {'n_estimators': 25, 'min_samples_split': 9, 'min_samples_leaf': 3, 'max_depth': None, 'criterion': 'entropy', 'bootstrap': False}
+RandomForest F1-Score with best parameters: 0.9598
 
 
-Лучшие параметры: {'n_estimators': 25, 'min_samples_split': 9, 'min_samples_leaf': 3, 'max_depth': 12, 'criterion': 'gini', 'bootstrap': False}
+Best parameters: {'n_estimators': 25, 'min_samples_split': 9, 'min_samples_leaf': 3, 'max_depth': 12, 'criterion': 'gini', 'bootstrap': False}
 accuracy score:  0.9733333333333334
-RandomForest F1-Score с лучшими параметрами: 0.9638
+RandomForest F1-Score with best parameters: 0.9638
 
 ❌  Parameters currently in use:
 
@@ -447,7 +483,7 @@ RandomForest F1-Score с лучшими параметрами: 0.9638
  'verbose': 0,
  'warm_start': False}
 
- accuracy dropped to 0.82 with the oob_score + max_leaf_nodes => nahui + poyebat'
+ accuracy dropped to 0.82 with the oob_score + max_leaf_nodes => we'll leave default values for them
 """
 
 def random_forest_with_random_search(spectrograms, labels, test_size=0.2, n_iter=10, cv=3):
@@ -523,14 +559,6 @@ if __name__ == "__main__":
     spectrograms = [load_spectrogram_from_npy(file) for file in npy_files if load_spectrogram_from_npy(file) is not None]
     labels = assign_labels_from_npy(npy_files)
 
-    #a part for neural (it works, just commenting for shortening the processing):
-
-    # split_index = int(0.8 * len(spectrograms))  # 80% for training, 20% for validation
-    # train_dataset = SpectrogramDataset(spectrograms[:split_index], labels[:split_index])
-    # val_dataset = SpectrogramDataset(spectrograms[split_index:], labels[split_index:])
-    # train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    # val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
-
     train_val_spectrograms, test_spectrograms, train_val_labels, test_labels = train_test_split(spectrograms, labels, test_size=0.2, random_state=42, stratify=labels)
     train_spectrograms, val_spectrograms, train_labels, val_labels = train_test_split(train_val_spectrograms, train_val_labels, test_size=0.125, random_state=42, stratify=train_val_labels)
     # 0.125 * 80% = 10%
@@ -556,6 +584,11 @@ if __name__ == "__main__":
 
     f1_test = calculate_f1_score(best_model, test_loader, device)
     print(f"f1-score on test_set (20%): {f1_test:.4f}")
+
+    calculate_spectrogram_stats(spectrograms)
+    print("Tracking most and least difficult samples on validation set:")
+    track_difficult_samples(best_model, val_loader, device)
+
 
     #I'll add Random Forest just because i like it
     # best_rf_model, best_params, rf_f1_score = random_forest_with_random_search(spectrograms, labels, test_size=0.2, n_iter=10, cv=3)
