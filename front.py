@@ -33,6 +33,22 @@ class VoiceRecognitionApp(QWidget):
         layout.addWidget(self.upload_button)
         self.setLayout(layout)
 
+    def loop_audio(self, y, target_length=10, sr=16000):
+        current_length = len(y)
+        target_length_in_samples = int(sr * target_length)
+
+        print(f"Current audio length: {current_length}, Target length: {target_length_in_samples}")
+
+        if current_length < target_length_in_samples:
+          repeat_factor = target_length_in_samples // current_length + 3
+          y_repeated = np.concatenate([y] * repeat_factor)
+          y_rep_len = len(y_repeated)
+          print(f"Looping audio. New length: {y_rep_len}")
+          return y_repeated
+        else:
+          print("Audio is long enogh, no looping needed")
+          return y
+
     def start_recording(self):
         self.recording = True
         self.audio_data = [] 
@@ -58,9 +74,10 @@ class VoiceRecognitionApp(QWidget):
       audio_data_np = np.concatenate(self.audio_data, axis=0)
 
       if len(audio_data_np) < 16000 * 10:
-            self.label.setText("The recording is too short, please try again.")
-            self.audio_data = []  # Reset audio data
-            return
+        self.label.setText("Warning! The recording is too short, looping to predict the class...")
+        audio_data_np = self.loop_audio(audio_data_np, target_length=10, sr=16000)  # Зацикливаем numpy данные
+        print(f"Audio length after looping: {len(audio_data_np)}")
+      
 
       # saving audio wav for preprocessing
       wav.write("recorded_audio.wav", 16000, audio_data_np.astype(np.float32))
@@ -104,6 +121,8 @@ class VoiceRecognitionApp(QWidget):
         output = self.model(spectrogram_tensor)
         _, predicted_class = torch.max(output, 1)
         return predicted_class.item()
+      
+
 
 
 if __name__ == '__main__':
