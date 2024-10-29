@@ -552,6 +552,7 @@ if __name__ == "__main__":
     cut_length = 10
     n_mels = 64  # Number of Mel bands
 
+    #generate_spectrogram(y, sr, n_mels)
     process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=n_mels, cut_length=cut_length, save_dir=save_dir)
 
     npy_files = load_npy_files(save_dir)
