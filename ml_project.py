@@ -29,9 +29,10 @@ import noisereduce as nr
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import seaborn as sns
 
-# 1. Recursively collect .wav files from all subdirectories
+
 def get_wav_files(wav_dir):
     """Recursively collect all .wav files in the directory and its subdirectories."""
     wav_files = []
@@ -44,18 +45,20 @@ def get_wav_files(wav_dir):
     return wav_files
 
 def apply_noise_reduction(y, sr=16000):
-    """Применение шумоподавления к аудиоданным."""
     reduced_noise_audio = nr.reduce_noise(y=y, sr=sr)
     return reduced_noise_audio
 
-def load_and_clean_audio(file_path, sr=16000, trim_silence=True, cut_length=None):
+def load_audio(file_path,sr=16000):
     try:
-        y, sr = librosa.load(file_path, sr=sr)
-        print(f"Loaded {file_path}, Audio Length: {len(y)}")
+      y, sr = librosa.load(file_path, sr=sr)
+      print(f"Loaded {file_path}, Audio Length: {len(y)}")
+      return y, sr
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        return None, None
 
-        y = apply_noise_reduction(y, sr)
-        print(f"Reduced noise {file_path}, Audio Length after reducing noise: {len(y)}")
-        
+def clean_audio(y,sr,file_path, trim_silence=True, cut_length=None):
+    try:
         y = y / np.max(np.abs(y))
 
         if trim_silence:
@@ -77,15 +80,14 @@ def generate_spectrogram(y, sr=16000, n_mels=64):
     S_dB = librosa.power_to_db(S, ref=np.max)
     return S_dB
 
-def save_spectrogram_to_npy(spectrogram, original_wav_file, save_dir):
+def save_spectrogram_to_npy(spectrogram, original_wav_file, save_dir, processed=False):
     """Save the spectrogram to a .npy file."""
     os.makedirs(save_dir, exist_ok=True)
-    file_name = os.path.basename(original_wav_file).replace('.wav', '.npy')  # Replace .wav with .npy
+
+    file_name = os.path.basename(original_wav_file).replace('.wav', '_processed.npy') if processed else os.path.basename(original_wav_file).replace('.wav', '.npy')  # Replace .wav with .npy
     save_path = os.path.join(save_dir, file_name)
     np.save(save_path, spectrogram)
     print(f"Spectrogram saved to {save_path}")
-
-    time.sleep(1)
 
 def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=64, cut_length=None, save_dir='/path/to/save/spectrograms'):
     """Process audio files, generate spectrograms, and save them as .npy files one at a time to avoid memory overload."""
@@ -100,13 +102,16 @@ def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=6
             continue
 
         try:
-            y, sr = load_and_clean_audio(file, sr=sr, cut_length=cut_length)
+            y, sr = load_audio(file, sr=sr)
             if y is None:
                 continue
 
             spectrogram = generate_spectrogram(y, sr, n_mels)
-
             save_spectrogram_to_npy(spectrogram, file, save_dir)
+
+            y, sr = clean_audio(y,sr,file,cut_length=cut_length)
+            spectrogram = generate_spectrogram(y, sr, n_mels)
+            save_spectrogram_to_npy(spectrogram, file, save_dir, processed=True)
 
             del y, spectrogram
             gc.collect()
@@ -121,6 +126,7 @@ def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=6
 
 # 2. Preliminary analysis
 # Spectogram mean and variance
+# Distributions of means and variances
 def calculate_spectrogram_stats(spectrograms):
     mean_list = []
     var_list = []
@@ -132,18 +138,79 @@ def calculate_spectrogram_stats(spectrograms):
     print(f"Average Spectrogram Mean: {np.mean(mean_list):.4f}")
     print(f"Average Spectrogram Variance: {np.mean(var_list):.4f}")
 
-#Tracking Most and Least Difficult Samples
-def track_difficult_samples(model, loader, device):
-    model.eval()
-    sample_difficulties = []
+    plt.figure(figsize=(6, 8))
+
+    plt.subplot(2, 1, 1)
+    plt.hist(mean_list, bins=20, color='skyblue', edgecolor='black')
+    plt.title("Distribution of Spectrogram Means")
+    plt.xlabel("Mean Intensity")
+    plt.ylabel("Frequency")
+
+    # Plot histogram of variances
+    plt.subplot(2, 1, 2)
+    plt.hist(var_list, bins=20, color='yellow', edgecolor='black')
+    plt.title("Distribution of Spectrogram Variances")
+    plt.xlabel("Variance in Intensity")
+    plt.ylabel("Frequency")
     
+    plt.tight_layout()
+    plt.show()
+
+def plot_confusion_matrix(model, loader, device, class_names=None):
+    model.eval()
+    all_labels = []
+    all_predictions = []
+
     with torch.no_grad():
         for X_batch, y_batch in loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)
             outputs = model(X_batch)
+            _, predicted = torch.max(outputs, 1)
+            all_labels.extend(y_batch.cpu().numpy())
+            all_predictions.extend(predicted.cpu().numpy())
+
+    # Generate the confusion matrix
+    cm = confusion_matrix(all_labels, all_predictions)
+    
+    # Display the confusion matrix
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    disp.plot(cmap=plt.cm.Blues, ax=ax)
+
+    for texts in ax.texts:
+        texts.set_visible(False)
+    
+    label_texts = [
+        f'TN\n{cm[0, 0]}',  
+        f'FP\n{cm[0, 1]}',  
+        f'FN\n{cm[1, 0]}', 
+        f'TP\n{cm[1, 1]}'  
+    ]
+
+    # Positions in the confusion matrix for TN, FP, FN, TP
+    positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    
+    for pos, label in zip(positions, label_texts):
+        ax.text(pos[1], pos[0], label, ha='center', va='center', color='white' if cm[pos[0], pos[1]] > cm.max() / 2 else 'black', fontsize=12, fontweight='bold')
+
+    plt.title("Confusion Matrix with TN, FP, FN, TP Labels")
+    plt.show()
+
+#Tracking Most and Least Difficult Samples
+def track_difficult_samples(model, loader, device, file_ids=None):
+    model.eval()
+    sample_difficulties = []
+    
+    with torch.no_grad():
+        for i, (X_batch, y_batch) in enumerate(loader):
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            outputs = model(X_batch)
             loss = F.cross_entropy(outputs, y_batch, reduction='none')
-            for i, l in enumerate(loss.cpu().numpy()):
-                sample_difficulties.append((X_batch[i], l, y_batch[i].cpu().numpy()))
+
+            batch_file_ids = file_ids[i * loader.batch_size: (i + 1) * loader.batch_size] if file_ids else [None] * len(y_batch)
+            
+            for j, l in enumerate(loss.cpu().numpy()):
+                sample_difficulties.append((batch_file_ids[j], l, y_batch[j].cpu().numpy()))
 
     # Sort samples by loss
     sample_difficulties = sorted(sample_difficulties, key=lambda x: x[1], reverse=True)
@@ -153,11 +220,11 @@ def track_difficult_samples(model, loader, device):
     
     print("Most difficult samples:")
     for sample in most_difficult:
-        print(f"Sample Loss: {sample[1]:.4f}")
+        print(f"Sample ID: {sample[0]}, Sample Class: {sample[2]}, Loss: {sample[1]:.4f}")
     
     print("Least difficult samples:")
     for sample in least_difficult:
-        print(f"Sample Loss: {sample[1]:.4f}")
+        print(f"Sample ID: {sample[0]}, Sample Class: {sample[2]}, Loss: {sample[1]:.4f}")
 
 # Finding Similar Samples Based on Activations
 def perform_clustering_and_plot(model, loader, device, n_clusters=5):
@@ -199,7 +266,7 @@ def perform_clustering_and_plot(model, loader, device, n_clusters=5):
 
 
 
-# 3. Visualize a Few npy's <-> in main the mount is set to "3"
+# 3. Visualize a Few npy's <-> in main the mount is set to "5"
 def visualize_spectrograms(npy_files, num_to_visualize=3):
 
     for i, npy_file in enumerate(npy_files[:num_to_visualize]):
@@ -217,13 +284,16 @@ def visualize_spectrograms(npy_files, num_to_visualize=3):
 def load_npy_files(npy_dir):
     """Recursively load all .npy files from the directory."""
     npy_files = []
+    processed_npy_files = []
     for root, dirs, files in os.walk(npy_dir):
         for file in files:
-            if file.endswith('.npy'):
+            if file.endswith('processed.npy'):
+                processed_npy_files.append(os.path.join(root, file))
+            elif file.endswith('.npy'):
                 npy_files.append(os.path.join(root, file))
 
     print(f"Total .npy files found: {len(npy_files)}")
-    return npy_files
+    return npy_files, processed_npy_files
 
 def load_spectrogram_from_npy(npy_file):
     """Load a spectrogram from a .npy file."""
@@ -299,7 +369,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
       if self.fc1 is None:
-        # плющим данные//flattening data
+        # flattening data
         flattened_size = x.view(x.size(0), -1).size(1)
         self.fc1 = nn.Linear(flattened_size, 128)
         self.fc1 = self.fc1.to(x.device)  # to device (CPU or GPU)
@@ -318,35 +388,35 @@ def compare_models(train_loader, val_loader, labels):
     }
 
     results = {}
-    best_f1 = 0.0  # Инициализируем с 0
+    best_f1 = 0.0  
     best_model = None
 
-    # Обучение каждой модели и вычисление F1-оценки
+    # Training + f1
     for model_name, model in models.items():
-        print(f"\n=== Обучение и оценка: {model_name} ===")
+        print(f"\n=== Training and estimation: {model_name} ===")
         f1 = train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, lr=0.001)
 
-        # Проверим, что f1 не None или NaN
+     
         if f1 is not None and not np.isnan(f1):
             results[model_name] = f1
             print(f"{model_name}: F1-оценка = {f1:.4f}")
 
-            # Сравниваем F1-оценки, чтобы найти лучшую модель
+            # Comparing f1's to take the best model - in the base case we have only CNN (MLP+RF ready)
             if f1 > best_f1:
                 best_f1 = f1
                 best_model = model
         else:
-            print(f"F1-оценка для {model_name} не была рассчитана корректно.")
+            print(f"F1-score for {model_name} wasn't calculated correctly")
 
-    print("\n=== Сравнение моделей ===")
+    print("\n=== Comparing models ===")
     for model_name, f1 in results.items():
         print(f"{model_name}: F1-оценка = {f1:.4f}")
 
-    # Проверим, что есть лучшая модель
+   
     if best_model is None:
-        raise ValueError("Ни одна из моделей не была обучена корректно или не имеет валидных F1-оценок.")
+        raise ValueError("No valid models with valid F1-scores.")
 
-    # Возвращаем модель с лучшей F1-оценкой
+    # Best f1 model
     return best_model
 
 def calculate_class_weights(labels):
@@ -403,7 +473,7 @@ def train_and_evaluate(model, train_loader, val_loader, labels, num_epochs=10, l
             all_preds.extend(predicted.cpu().numpy())
             all_labels.extend(y_batch.cpu().numpy())
 
-    # Вычисление F1-score
+    # F1-score estimation
     f1 = f1_score(all_labels, all_preds, average='macro')
     return f1
 
@@ -555,12 +625,26 @@ if __name__ == "__main__":
     #generate_spectrogram(y, sr, n_mels)
     process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=n_mels, cut_length=cut_length, save_dir=save_dir)
 
-    npy_files = load_npy_files(save_dir)
-    visualize_spectrograms(npy_files, num_to_visualize=3)
-    spectrograms = [load_spectrogram_from_npy(file) for file in npy_files if load_spectrogram_from_npy(file) is not None]
-    labels = assign_labels_from_npy(npy_files)
+    npy_files, processed_npy_files = load_npy_files(save_dir)
 
-    train_val_spectrograms, test_spectrograms, train_val_labels, test_labels = train_test_split(spectrograms, labels, test_size=0.2, random_state=42, stratify=labels)
+    print(f"Raw .npy files Spectrograms:")
+    visualize_spectrograms(npy_files, num_to_visualize=5)
+
+    print(f"Processed .npy files Spectrograms:")
+    visualize_spectrograms(processed_npy_files, num_to_visualize=5)
+
+    processed_spectrograms = [load_spectrogram_from_npy(file) for file in processed_npy_files if load_spectrogram_from_npy(file) is not None]
+    raw_data_spectrograms = [load_spectrogram_from_npy(file) for file in npy_files if load_spectrogram_from_npy(file) is not None]
+    
+    labels = assign_labels_from_npy(processed_npy_files)
+
+    print("Statistics for Processed Spectrograms:")
+    calculate_spectrogram_stats(processed_spectrograms)
+    print("Statistics for Raw Spectrograms:")
+    calculate_spectrogram_stats(raw_data_spectrograms)
+
+    train_val_spectrograms, test_spectrograms, train_val_labels, test_labels = train_test_split(processed_spectrograms, labels, test_size=0.2, random_state=42, stratify=labels)
+
     train_spectrograms, val_spectrograms, train_labels, val_labels = train_test_split(train_val_spectrograms, train_val_labels, test_size=0.125, random_state=42, stratify=train_val_labels)
     # 0.125 * 80% = 10%
 
@@ -576,7 +660,7 @@ if __name__ == "__main__":
 
     best_model = compare_models(train_loader, val_loader, labels)
 
-    model_save_path = '/Users/sunsosun/Desktop/ML_DEPLOY/best_model.pth'
+    model_save_path = './best_model.pth'
     save_model_neural(best_model, model_save_path)
     print(f"Model saved to: {model_save_path}")
 
@@ -586,9 +670,15 @@ if __name__ == "__main__":
     f1_test = calculate_f1_score(best_model, test_loader, device)
     print(f"f1-score on test_set (20%): {f1_test:.4f}")
 
-    calculate_spectrogram_stats(spectrograms)
+    file_ids = [os.path.basename(file) for file in processed_npy_files] 
+
+
     print("Tracking most and least difficult samples on validation set:")
-    track_difficult_samples(best_model, val_loader, device)
+    track_difficult_samples(best_model, val_loader, device, file_ids)
+
+    print("Confusion Matrix on Validation Set:")
+    class_names = ['Class 0', 'Class 1']  
+    plot_confusion_matrix(best_model, val_loader, device, class_names)
 
 
     #I'll add Random Forest just because i like it
