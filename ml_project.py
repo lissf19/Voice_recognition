@@ -48,14 +48,17 @@ def apply_noise_reduction(y, sr=16000):
     reduced_noise_audio = nr.reduce_noise(y=y, sr=sr)
     return reduced_noise_audio
 
-def load_and_clean_audio(file_path, sr=16000, trim_silence=True, cut_length=None):
+def load_audio(file_path,sr=16000):
     try:
-        y, sr = librosa.load(file_path, sr=sr)
-        print(f"Loaded {file_path}, Audio Length: {len(y)}")
+      y, sr = librosa.load(file_path, sr=sr)
+      print(f"Loaded {file_path}, Audio Length: {len(y)}")
+      return y, sr
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        return None, None
 
-        y = apply_noise_reduction(y, sr)
-        print(f"Reduced noise {file_path}, Audio Length after reducing noise: {len(y)}")
-        
+def clean_audio(y,sr,file_path, trim_silence=True, cut_length=None):
+    try:
         y = y / np.max(np.abs(y))
 
         if trim_silence:
@@ -77,15 +80,14 @@ def generate_spectrogram(y, sr=16000, n_mels=64):
     S_dB = librosa.power_to_db(S, ref=np.max)
     return S_dB
 
-def save_spectrogram_to_npy(spectrogram, original_wav_file, save_dir):
+def save_spectrogram_to_npy(spectrogram, original_wav_file, save_dir, processed=False):
     """Save the spectrogram to a .npy file."""
     os.makedirs(save_dir, exist_ok=True)
-    file_name = os.path.basename(original_wav_file).replace('.wav', '.npy')  # Replace .wav with .npy
+
+    file_name = os.path.basename(original_wav_file).replace('.wav', '_processed.npy') if processed else os.path.basename(original_wav_file).replace('.wav', '.npy')  # Replace .wav with .npy
     save_path = os.path.join(save_dir, file_name)
     np.save(save_path, spectrogram)
     print(f"Spectrogram saved to {save_path}")
-
-    time.sleep(1)
 
 def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=64, cut_length=None, save_dir='/path/to/save/spectrograms'):
     """Process audio files, generate spectrograms, and save them as .npy files one at a time to avoid memory overload."""
@@ -100,13 +102,16 @@ def process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=6
             continue
 
         try:
-            y, sr = load_and_clean_audio(file, sr=sr, cut_length=cut_length)
+            y, sr = load_audio(file, sr=sr)
             if y is None:
                 continue
 
             spectrogram = generate_spectrogram(y, sr, n_mels)
-
             save_spectrogram_to_npy(spectrogram, file, save_dir)
+
+            y, sr = clean_audio(y,sr,file,cut_length=cut_length)
+            spectrogram = generate_spectrogram(y, sr, n_mels)
+            save_spectrogram_to_npy(spectrogram, file, save_dir, processed=True)
 
             del y, spectrogram
             gc.collect()
@@ -217,13 +222,16 @@ def visualize_spectrograms(npy_files, num_to_visualize=3):
 def load_npy_files(npy_dir):
     """Recursively load all .npy files from the directory."""
     npy_files = []
+    processed_npy_files = []
     for root, dirs, files in os.walk(npy_dir):
         for file in files:
-            if file.endswith('.npy'):
+            if file.endswith('processed.npy'):
+                processed_npy_files.append(os.path.join(root, file))
+            elif file.endswith('.npy'):
                 npy_files.append(os.path.join(root, file))
 
     print(f"Total .npy files found: {len(npy_files)}")
-    return npy_files
+    return npy_files, processed_npy_files
 
 def load_spectrogram_from_npy(npy_file):
     """Load a spectrogram from a .npy file."""
@@ -547,17 +555,20 @@ def random_forest_with_random_search(spectrograms, labels, test_size=0.2, n_iter
     return best_rf, best_params, f1
 
 if __name__ == "__main__":
-    wav_dir = '/Users/sunsosun/Desktop/ML_DEPLOY/daps'
-    save_dir = '/Users/sunsosun/Desktop/ML_DEPLOY/npy_spectrograms'
+    wav_dir = './daps'
+    save_dir = '/npy_spectrograms'
     cut_length = 10
     n_mels = 64  # Number of Mel bands
 
     process_audio_to_spectrograms_and_save_in_chunks(wav_dir, sr=16000, n_mels=n_mels, cut_length=cut_length, save_dir=save_dir)
 
-    npy_files = load_npy_files(save_dir)
-    visualize_spectrograms(npy_files, num_to_visualize=3)
-    spectrograms = [load_spectrogram_from_npy(file) for file in npy_files if load_spectrogram_from_npy(file) is not None]
-    labels = assign_labels_from_npy(npy_files)
+    npy_files, processed_npy_files = load_npy_files(save_dir)
+    print(f"Preprocessed .npy files Spectrograms:")
+    visualize_spectrograms(npy_files, num_to_visualize=5)
+    print(f"Processed .npy files Spectrograms:")
+    visualize_spectrograms(processed_npy_files, num_to_visualize=5)
+    spectrograms = [load_spectrogram_from_npy(file) for file in processed_npy_files if load_spectrogram_from_npy(file) is not None]
+    labels = assign_labels_from_npy(processed_npy_files)
 
     train_val_spectrograms, test_spectrograms, train_val_labels, test_labels = train_test_split(spectrograms, labels, test_size=0.2, random_state=42, stratify=labels)
     train_spectrograms, val_spectrograms, train_labels, val_labels = train_test_split(train_val_spectrograms, train_val_labels, test_size=0.125, random_state=42, stratify=train_val_labels)
@@ -575,7 +586,7 @@ if __name__ == "__main__":
 
     best_model = compare_models(train_loader, val_loader, labels)
 
-    model_save_path = '/Users/sunsosun/Desktop/ML_DEPLOY/best_model.pth'
+    model_save_path = './best_model.pth'
     save_model_neural(best_model, model_save_path)
     print(f"Model saved to: {model_save_path}")
 
