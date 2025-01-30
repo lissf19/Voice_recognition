@@ -111,14 +111,9 @@ To improve model efficiency, we implemented **Layer-Wise Pruning**, inspired by 
 To run the **front-end GUI**, execute:
 
 ```bash
-./front.exe
+pyinstaller front.spec
 ```
-
-Or for a more customizable setup:
-
-```bash
-python front.spec
-```
+Run the packed executable. 
 
 ### **Running the Model Pipeline**
 
