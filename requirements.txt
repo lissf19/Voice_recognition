@@ -1,0 +1,8 @@
+PyQt5
+sounddevice
+numpy
+scipy
+torch
+matplotlib
+librosa
+numba
