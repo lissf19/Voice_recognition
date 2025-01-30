@@ -1,62 +1,137 @@
-The main dataset used in this project and used by us to compare teams performances is DAPS
-(Device and Produced Speech) Dataset (https://zenodo.org/records/4660670 ).
-Six speakers from this dataset: F1, F7, F8, M3, M6, M8, form Class 1. The other 14 speakers belong to Class 0.
+# **Automated Intercom System - Voice Recognition using Deep Learning**
 
-As a final user:
+## **Project Overview**
 
-1. I am initializing the listening procedure.
-2. The program listens to me with the use of a laptop microphone and detects the class.
-3. Detected class and, optionally, confidence level, is displayed on the screen. The Jupyter-notebook program is used in this scenario.
+This project aims to develop an **automated intercom system** that recognizes whether a speaker belongs to an allowed group (Class 1) or not (Class 0). The system leverages **deep learning models trained on spectrograms** of audio data, making it robust for real-world deployment.
 
-The chosen metrics for evaluation - f1-score.
-The chosen models: Neural - CNN, MLP, Classical - Random Forest Classifier together with RandomizedSearchCV applied.
+## **Dataset**
 
-! Preliminary analysis:
-i. In the **main** we're generating random spectograms for raw wav files and processed data:
-Here are the key observations:
+We use the **DAPS (Device and Produced Speech) Dataset** ([Zenodo Link](https://zenodo.org/records/4660670)), which contains **1800 audio files** of varying length and quality.
 
-Observations made:
+- **Class 1 (Allowed Users)**: F1, F7, F8, M3, M6, M8 (6 speakers)
+- **Class 0 (Unknown Users)**: All other 14 speakers
 
-1. Raw data spectograms (RDS) are over 2 min long
-2. RDS contain excess information - not clear patterns, noises (particularly at lower frequencies)
-3. RDS have a denser frequency range, likely due to background noises, irrelevant data (like silence) - we cannot really focus on essential audio features
+This results in a **binary classification** problem.
 
-Thus, preprocessing techniques were applied to each audio file like (trimming silences, reducing noises and cutting up to 10 sec)
+## **User Experience (UX/UI)**
 
-As a result we have processed spectograms (it's visible in spectograms samples (also 5)):
+The final system is implemented as a simple **UI** app that allows users to interact with the model:
 
-1. Processed spectrograms are much shorter (10 seconds) compared to raw ones.
-   This trimming helps focus on essential audio features and removes excess information.
-2. Noise Reduction: Processed spectrograms appear cleaner, with clearer patterns, indicating effective noise reduction and silence trimming.
-3. Frequency Information: Processed spectrograms highlight more distinct frequency patterns relevant to the voice signal.
-4. Target Information: Processed spectrograms better capture the essential voice characteristics, making them more suitable for training a model focused on voice recognition.
+1. The user initializes the listening procedure.
+2. The system captures audio using the laptop microphone.
+3. The model predicts the speaker’s class and displays the result.
+4. The user uploads a prerecorded audio or uploaded one and sees the result in the app window. 
 
-In summary, processed spectrograms provide a clearer, noise-reduced representation of voice signals, which should enhance model performance by focusing on relevant features.
+Additionally, the UX/UI functionality includes **looping the audio after trimming silence** to ensure a minimum duration of **3 seconds** before processing.
 
-ii. Histograms
-The histograms were created to explore the characteristics of the spectrograms generated from the audio data.
+## **Modeling Approach**
 
-Mean Intensity: This represents the average amplitude of the spectrogram across time and frequency.
-Variance in Intensity: This indicates how much the intensity varies.
+We experiment with several models and optimize for the **F1-score**, the chosen evaluation metric. The best-performing models are:
 
-We calculated the mean and variance for each spectrogram generated from the raw and processed audio files.
-Separate histograms were generated for both the mean and variance values. These were created for both the raw and processed spectrograms, allowing us to compare the distributions.
+### **Deep Learning Models:**
 
-Observations:
-Mean intensity:
-Raw Spectrograms: The mean intensity of raw spectrograms was lower and more spread out, indicating that raw audio files generally had lower average amplitude.
-Processed Spectrograms: The processed spectrograms showed a more concentrated distribution with slightly higher mean intensities. This is likely due to noise reduction and normalization, which raised the average amplitude by removing background noise.
+- **Simplified ResNet** *(Best Model: F1-score: 0.98 Validation, 0.9760 Test)*
+- **CNN (Adam + LR Scheduler)**
+- **Monte Carlo Dropout (MC Dropout) for Uncertainty Estimation**
+- **MLP (Baseline for comparison)**
 
-Distribution of Variance in Intensity:
-Raw Spectrograms: The raw data had a wider spread in variance, suggesting that there was more variability in the audio’s intensity levels, possibly due to background noise or uneven recording conditions.
-Processed Spectrograms: The processed spectrograms had a more concentrated variance distribution, often lower than the raw data. This suggests that noise reduction and other processing steps made the audio more uniform and reduced extreme intensity changes.
+### **Classical Machine Learning Models:**
 
-Result:
-The histograms suggest that processing steps (like noise reduction and trimming) made the spectrograms more consistent by increasing mean intensity and reducing variance. This could be beneficial for our CNN model, as it reduces unnecessary variations and focuses on essential audio features.
+- **Random Forest Classifier** with **RandomizedSearchCV** hyperparameter tuning.
 
-Main CNN model:
-The chosen activation function - Relu
-Splitting - 70-20-10
-Optimizer - Adam
-Scheduler - StepLR (step_size=5, gamma=0.1)
-Noise Reduction - noisereduse Fast Fourier transform (FFT)
+## **Preprocessing Steps**
+
+**Why Preprocessing?** Raw audio files contain excess information like silence, noise, and irrelevant frequency components. To improve classification accuracy, we preprocess the data before converting it into spectrograms.
+
+### **Key Preprocessing Techniques Applied:**
+
+1. **Trimming Silence**: Removing long silences ensures only meaningful speech is retained.
+2. **Noise Reduction**: Background noise is filtered to enhance clarity.
+3. **Segmenting Audio**: Longer recordings are cut into **3-second** chunks for consistency.
+4. **Feature Extraction**: Convert audio into **Mel-spectrograms** (64 mel bands, 16kHz sampling rate).
+
+## **Exploratory Data Analysis (EDA)**
+
+### **Spectrogram Analysis**
+
+- **Raw Spectrograms (RDS)**:
+  - Can be over **2 minutes long**.
+  - Contain **excess noise and silence**, leading to unclear patterns.
+  - Show **denser frequency ranges**, likely due to background noise.
+- **Processed Spectrograms**:
+  - **Much shorter** (3 sec max), focusing on essential speech components.
+  - **Clearer patterns**, thanks to effective noise reduction.
+  - **More distinct frequency features**, improving model training.
+
+### **Histograms: Mean & Variance in Intensity**
+
+We analyzed the distribution of **mean intensity and variance** before and after preprocessing:
+
+- **Raw Spectrograms:**
+  - Lower mean intensity due to background noise.
+  - Higher variance in intensity, suggesting uneven recording conditions.
+- **Processed Spectrograms:**
+  - Higher mean intensity after **normalization**.
+  - Lower variance due to **smoother, more consistent** features.
+
+These improvements ensure the model focuses on essential **voice patterns**, rather than noise and silence.
+
+## **Monte Carlo Dropout for Uncertainty Estimation**
+
+To estimate classification confidence, **Monte Carlo Dropout (MC Dropout)** was implemented with **T=1000 stochastic forward passes**, which significantly improved precision-recall balance. The final F1-score for **MC Dropout: 0.9030**. MC Dropout exhibits higher uncertainty compared to the ensemble method, as expected, due to its stochastic nature.
+The ensemble model has lower uncertainty and a tighter spread, thus more stable predictions.
+
+Additionally, an **ensemble of 5 CNN models** was trained for comparison, achieving an F1-score of **0.9307**.
+
+## **Model Pruning and Optimization**
+
+To improve model efficiency, we implemented **Layer-Wise Pruning**, inspired by the **Lottery Ticket Hypothesis**.
+
+1. **Original Model:** ResNet with **100% parameters** (F1-score: 0.9760).
+2. **Pruned Model:** ResNet with **50% sparsity** (Layer-Wise Pruning).
+   - **Fine-tuned F1-score: 0.9683** → **Minimal quality loss!**
+   - **Inference time improved** from **57.49 ms → 43.74 ms per batch.**
+3. **Reinitialized Pruned Model:** Resetting pruned weights to their **original initialization** and training again.
+   - **Inference time: 43.74 ms** (faster than original model).
+
+## **Performance Comparison**
+
+| Model                           | F1-score (Test) | Inference Time (ms/batch) |
+| ------------------------------- | --------------- | ------------------------- |
+| **Original ResNet**             | 0.9760          | 57.49                     |
+| **Fine-Tuned Pruned ResNet**    | 0.9683          | 48.77                     |
+| **Reinitialized Pruned ResNet** | 0.9683          | 43.74                     |
+| **MC Dropout**                  | 0.9030          | -                         |
+| **Ensemble Model**              | 0.9307          | -                         |
+
+## **How to Run the Project**
+
+### **Running the UI Application**
+
+To run the **front-end GUI**, execute:
+
+```bash
+./front.exe
+```
+
+Or for a more customizable setup:
+
+```bash
+python front.spec
+```
+
+### **Running the Model Pipeline**
+
+1. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Run the preprocessing pipeline**:
+   ```python
+   from ml_project_laris import process_audio_to_spectrograms_and_save_in_chunks
+   process_audio_to_spectrograms_and_save_in_chunks('./daps', sr=16000, n_mels=64, cut_length=3, save_dir='./npy_spectrograms')
+   ```
+
+Alternatively, you can run the Jupyter Notebooks to analyze the dataset, visualize results, or run the whole pipeline of preprocessing, training and predicting.
+🚀 **For detailed reports and explanations, go to** `FinalReport.ipynb` **and** `ml_project_code.ipynb`. 🚀
+
