@@ -125,11 +125,25 @@ Run the packed executable.
    pip install -r requirements.txt
    ```
 2. **Run the preprocessing pipeline**:
-   ```python
-   from ml_project_laris import process_audio_to_spectrograms_and_save_in_chunks
-   process_audio_to_spectrograms_and_save_in_chunks('./daps', sr=16000, n_mels=64, cut_length=3, save_dir='./npy_spectrograms')
-   ```
+   In `ml_project_code.ipynb` run the dependencies cell and then all the cells before and including process_audio_to_spectrograms_and_save_in_chunks(
+    input_dir="./daps", 
+    sr=16000, 
+    n_mels=64, 
+    cut_length=3, 
+    save_dir="./npy_spectrograms"
+). Don't forget to change the input files directory and the saving directory for processed files.
 
-Alternatively, you can run the Jupyter Notebooks to analyze the dataset, visualize results, or run the whole pipeline of preprocessing, training and predicting.
-🚀 **For detailed reports and explanations, go to** `FinalReport.ipynb` **and** `ml_project_code.ipynb`. 🚀
+## ➡️ **Run the Needed Cells for the Full Pipeline**
+
+To execute the full **preprocessing, training, and inference pipeline**, run the required **cells in the Jupyter Notebook**.
+
+✅ **Analyze the dataset**  
+✅ **Visualize spectrograms and histograms**  
+✅ **Run the full pipeline (preprocessing → training → prediction)**  
+
+📌 **For detailed reports and implementation, refer to:**  
+📂 `FinalReport.ipynb`  
+📂 `ml_project_code.ipynb`  
+
+
 
