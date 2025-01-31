@@ -104,6 +104,9 @@ To improve model efficiency, we implemented **Layer-Wise Pruning**, inspired by 
 | **MC Dropout**                  | 0.9030          | -                         |
 | **Ensemble Model**              | 0.9307          | -                         |
 
+## **Model Pruning and Optimization**
+Various test cases are covered as well. The description of test can be found in `FinalReport.ipynb` and the tests themselves are in `Tests.ipynb`
+
 ## **How to Run the Project**
 
 ### **Running the UI Application**
